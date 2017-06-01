@@ -46,15 +46,10 @@ import opendial.datastructs.Assignment;
 import opendial.datastructs.SpeechData;
 import opendial.domains.Domain;
 import opendial.domains.Model;
-import opendial.gui.GUIFrame;
-import opendial.gui.TextOnlyInterface;
-import opendial.modules.AudioModule;
 import opendial.modules.DialogueImporter;
 import opendial.modules.DialogueRecorder;
 import opendial.modules.ForwardPlanner;
 import opendial.modules.Module;
-import opendial.modules.RemoteConnector;
-import opendial.modules.simulation.Simulator;
 import opendial.readers.XMLDomainReader;
 import opendial.readers.XMLDialogueReader;
 
@@ -110,9 +105,7 @@ public class DialogueSystem {
 
 		// inserting standard modules
 		modules = new ArrayList<Module>();
-		modules.add(new GUIFrame(this));
 		modules.add(new DialogueRecorder(this));
-		modules.add(new RemoteConnector(this));
 		modules.add(new ForwardPlanner(this));
 		domain = new Domain();
 
@@ -213,15 +206,11 @@ public class DialogueSystem {
 		try {
 			Constructor<T> constructor = module.getConstructor(DialogueSystem.class);
 			attachModule(constructor.newInstance(this));
-			displayComment(
-					"Module " + module.getSimpleName() + " successfully attached");
 		}
 		catch (InstantiationException | IllegalAccessException
 				| IllegalArgumentException | InvocationTargetException
 				| NoSuchMethodException | SecurityException e) {
 			log.warning(
-					"cannot attach " + module.getSimpleName() + ": " + e.getCause());
-			displayComment(
 					"cannot attach " + module.getSimpleName() + ": " + e.getCause());
 		}
 	}
@@ -263,25 +252,6 @@ public class DialogueSystem {
 	}
 
 	/**
-	 * Adds a comment on the GUI and the dialogue recorder.
-	 * 
-	 * @param comment the comment to display
-	 */
-	public void displayComment(String comment) {
-		if (getModule(GUIFrame.class) != null
-				&& getModule(GUIFrame.class).isRunning()) {
-			getModule(GUIFrame.class).addComment(comment);
-		}
-		else {
-			log.info(comment);
-		}
-		if (getModule(DialogueRecorder.class) != null
-				&& getModule(DialogueRecorder.class).isRunning()) {
-			getModule(DialogueRecorder.class).addComment(comment);
-		}
-	}
-
-	/**
 	 * Changes the settings of the system
 	 * 
 	 * @param settings the new settings
@@ -294,32 +264,6 @@ public class DialogueSystem {
 			if (getModule(toAttach) == null) {
 				log.fine("Attaching module: " + toAttach.getSimpleName());
 				attachModule(toAttach);
-			}
-		}
-	}
-
-	/**
-	 * Enables or disables speech input for the system.
-	 * 
-	 * @param toEnable whether to enable or disable speech input
-	 */
-	public void enableSpeech(boolean toEnable) {
-		if (toEnable) {
-			if (getModule(AudioModule.class) == null) {
-				settings.selectAudioMixers();
-				attachModule(AudioModule.class);
-				if (settings.showGUI) {
-					getModule(GUIFrame.class).enableSpeech(true);
-				}
-				else {
-					getModule(AudioModule.class).activateVAD(true);
-				}
-			}
-		}
-		else {
-			detachModule(AudioModule.class);
-			if (getModule(GUIFrame.class) != null) {
-				getModule(GUIFrame.class).enableSpeech(false);
 			}
 		}
 	}
@@ -673,7 +617,7 @@ public class DialogueSystem {
 					int count = updatedVars.compute(v,
 							(x, y) -> (y == null) ? 1 : y + 1);
 					if (count > 10) {
-						displayComment("Warning: Recursive update of variable " + v);
+						//displayComment("Warning: Recursive update of variable " + v);
 						return updatedVars.keySet();
 					}
 				}
@@ -681,48 +625,6 @@ public class DialogueSystem {
 		}
 
 		return updatedVars.keySet();
-	}
-
-	/**
-	 * Connects to a remote client with the given IP address and port
-	 * 
-	 * @param address the IP address of the remote client
-	 * @param port the port of the remote client
-	 */
-	public void connectTo(String address, int port) {
-		settings.remoteConnections.put(address, port);
-		getModule(RemoteConnector.class).connectTo(address, port);
-		if (settings.showGUI) {
-			getModule(GUIFrame.class).getMenu().update();
-		}
-	}
-
-	/**
-	 * Refreshes the dialogue domain by rereading its source file (in case it has
-	 * been changed by the user).
-	 * 
-	 */
-	public void refreshDomain() {
-		if (domain.isEmpty()) {
-			return;
-		}
-		String srcFile = domain.getSourceFile().getPath();//.getAbsolutePath();
-		try {
-			domain = XMLDomainReader.extractDomain(srcFile);
-			changeSettings(domain.getSettings());
-			displayComment("Dialogue domain successfully updated");
-		}
-		catch (RuntimeException e) {
-			// e.printStackTrace();
-			log.severe("Cannot refresh domain: " + e.getMessage());
-			displayComment("Syntax error: " + e.getMessage());
-			domain = new Domain();
-			domain.setSourceFile(new File(srcFile));
-		}
-
-		if (getModule(GUIFrame.class) != null) {
-			getModule(GUIFrame.class).refresh();
-		}
 	}
 
 	// ===================================
@@ -820,78 +722,6 @@ public class DialogueSystem {
 	 */
 	public Collection<Module> getModules() {
 		return new ArrayList<Module>(modules);
-	}
-
-	/**
-	 * Returns the local address (IP and port) used by the dialogue system
-	 * 
-	 * @return the IP_address:port of the dialogue system
-	 */
-	public String getLocalAddress() {
-		return getModule(RemoteConnector.class).getLocalAddress();
-	}
-
-	// ===================================
-	// MAIN METHOD
-	// ===================================
-
-	/**
-	 * Starts the dialogue system. The content of the args array is ignored.
-	 * Command-line parameters can however be specified through system properties via
-	 * the -D flag. All parameters are optional.
-	 * 
-	 * <p>
-	 * Some of the possible properties are:
-	 * <ul>
-	 * <li>-Ddomain=path/to/domain/file: dialogue domain file
-	 * <li>-Ddialogue=path/to/recorded/dialogue: dialogue file to import
-	 * <li>-Dsimulator=path/to/simulator/file: domain file for the simulator
-	 * <li>--Dgui=true or false: activates or deactives the GUI
-	 * </ul>
-	 * 
-	 * @param args is ignored.
-	 * @throws IOException
-	 */
-	public static void main(String[] args) throws IOException {
-
-		DialogueSystem system = new DialogueSystem();
-		String domainFile = System.getProperty("domain");
-		String dialogueFile = System.getProperty("dialogue");
-		String simulatorFile = System.getProperty("simulator");
-
-		system.getSettings().fillSettings(System.getProperties());
-		if (domainFile != null) {
-			Domain domain;
-			try {
-				domain = XMLDomainReader.extractDomain(domainFile);
-				log.info("Domain from " + domainFile + " successfully extracted");
-			}
-			catch (RuntimeException e) {
-				system.displayComment("Cannot load domain: " + e);
-				e.printStackTrace();
-				domain = XMLDomainReader.extractEmptyDomain(domainFile);
-			}
-			system.changeDomain(domain);
-		}
-		if (dialogueFile != null) {
-			system.importDialogue(dialogueFile);
-		}
-		if (simulatorFile != null) {
-			Simulator simulator = new Simulator(system,
-					XMLDomainReader.extractDomain(simulatorFile));
-			log.info("Simulator with domain " + simulatorFile
-					+ " successfully extracted");
-			system.attachModule(simulator);
-		}
-		Settings settings = system.getSettings();
-		system.changeSettings(settings);
-
-		if (!settings.showGUI) {
-			system.attachModule(new TextOnlyInterface(system));
-		}
-
-		system.startSystem();
-		log.info("Dialogue system started!");
 	}
 
 }
